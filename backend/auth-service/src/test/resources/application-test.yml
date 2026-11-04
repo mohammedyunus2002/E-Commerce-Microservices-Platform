@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    # One database per Spring test context, so cached contexts never see each other's rows.
+    url: jdbc:h2:mem:auth_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+
+security:
+  jwt:
+    # Test-only key; real deployments read JWT_SECRET from the environment.
+    secret: test-only-signing-key-0123456789-abcdef
+    issuer: ecommerce-auth-service
+    access-token-ttl: 15m
+  password:
+    bcrypt-strength: 4

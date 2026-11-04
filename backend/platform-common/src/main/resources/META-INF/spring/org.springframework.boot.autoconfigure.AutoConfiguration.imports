@@ -1,0 +1,3 @@
+com.ecommerce.common.config.PlatformCoreAutoConfiguration
+com.ecommerce.common.config.PlatformCommonAutoConfiguration
+com.ecommerce.common.config.PlatformOpenApiAutoConfiguration
