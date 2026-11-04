@@ -32,8 +32,8 @@ flowchart LR
 | --- | --- | --- | --- |
 | api-gateway | 8080 | none | Routing, edge JWT check, CORS, error mapping, correlation IDs |
 | auth-service | 8081 | `auth_db` | Users, roles, BCrypt hashes, profiles, token issuance |
-| product-service | 8082 | `product_db` | Categories, products, search, Redis cache (*planned*) |
-| inventory-service | 8083 | `inventory_db` | Stock and reservations (*planned*) |
+| product-service | 8082 | `product_db` | Categories, products, search, Redis read cache |
+| inventory-service | 8083 | `inventory_db` | Stock levels and per-order reservations |
 | order-service | 8084 | `order_db` | Orders, items, saga state, Redis cart (*planned*) |
 | payment-service | 8085 | `payment_db` | Simulated charges and refunds (*planned*) |
 | notification-service | 8086 | `notification_db` | Mock email history (*planned*) |
@@ -77,12 +77,54 @@ sequenceDiagram
 | `/api/admin/users/**` | auth-service | ADMIN |
 | `/api/products/**`, `/api/categories/**` | product-service | Public GET |
 | `/api/admin/products/**`, `/api/admin/categories/**` | product-service | ADMIN |
-| `/api/inventory/**`, `/api/admin/inventory/**` | inventory-service | Authenticated / ADMIN |
+| `/api/inventory/availability/**` | inventory-service | Public GET |
+| `/api/admin/inventory/**` | inventory-service | ADMIN |
 | `/api/orders/**`, `/api/cart/**`, `/api/admin/orders/**` | order-service | Authenticated / ADMIN |
 | `/api/payments/**`, `/api/admin/payments/**` | payment-service | Authenticated / ADMIN |
 | `/api/notifications/**`, `/api/admin/notifications/**` | notification-service | Authenticated / ADMIN |
 
 Every admin endpoint lives under `/api/admin/`, so the gateway enforces the ADMIN role with one rule.
+
+## Product cache (Redis)
+
+- Cache-aside through Spring Cache: `products::<id>` (TTL `PRODUCT_CACHE_TTL`, default 10 minutes)
+  and `categories::all` (TTL `CATEGORY_CACHE_TTL`, default 30 minutes), keys prefixed `product-service:`.
+- Values are plain JSON bound to the DTO type, with no `@class` type hints, so cached data never
+  drives class loading.
+- Search results are not cached: the filter combinations are unbounded and hit rates would be low.
+  Indexed MySQL queries serve them.
+- The cache manager is transaction-aware. Puts and evictions run after the database commit, so
+  a reader cannot repopulate the cache with data that is about to be replaced.
+- Product writes evict that product. Category rename or delete evicts all products, because
+  cached products embed the category name.
+- If Redis fails, reads and writes fall back to MySQL and a warning is logged. Redis is never a
+  hard dependency for serving the catalog.
+- Hit and miss counts are exported as `cache_gets_total{cache,result}` for Grafana.
+
+## Stock reservations
+
+Each stock change is one conditional `UPDATE`, never a read-modify-write in Java:
+
+```sql
+UPDATE inventory_items
+   SET available_quantity = available_quantity - :qty,
+       reserved_quantity  = reserved_quantity + :qty
+ WHERE product_id = :id AND available_quantity >= :qty
+```
+
+- Zero rows updated means not enough stock. The MySQL row lock serializes concurrent buyers, so
+  stock cannot be oversold. A Testcontainers test runs 40 concurrent single-unit orders against
+  10 units and checks that exactly 10 succeed.
+- An order's lines are reserved in one transaction, in ascending product ID order. A shortage on
+  any line rolls back the whole order, and the fixed lock order prevents deadlocks between orders
+  sharing products.
+- Reservations move `RESERVED` to `RELEASED` (stock returns) or `COMMITTED` (stock leaves) through
+  a compare-and-set on the status. A duplicate release or commit changes nothing.
+- A unique key on `(order_id, product_id)` makes a duplicate reservation for the same order fail
+  and roll back, so redelivered messages cannot hold stock twice.
+- Setting stock for a product the first time calls product-service to confirm the product exists,
+  relaying the admin's token and the correlation ID. That HTTP call runs before the database
+  transaction opens, so no connection is held while waiting on the network.
 
 ## Error contract
 
@@ -155,3 +197,4 @@ Reliability rules:
 | Flyway | 11.20.3 | Overrides the Boot-managed 11.7.x for MySQL 8.4 support; same major line |
 | springdoc-openapi | 2.8.17 | |
 | MySQL | 8.4 LTS | |
+| Redis | 7.4 | Product catalog cache |

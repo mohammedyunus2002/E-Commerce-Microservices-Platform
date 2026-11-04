@@ -49,7 +49,7 @@ public class GatewaySecurityConfig {
             "/actuator/health/**", "/actuator/info", "/actuator/prometheus"
     };
     private static final String[] PUBLIC_CATALOG_READS = {
-            "/api/products/**", "/api/categories/**"
+            "/api/products/**", "/api/categories/**", "/api/inventory/availability/**"
     };
 
     @Bean

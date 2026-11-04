@@ -49,6 +49,7 @@ class GatewayRoutingSecurityTest {
         registry.add("gateway.security.cors-allowed-origins", () -> "http://localhost:3000");
         registry.add("spring.cloud.discovery.client.simple.instances.auth-service[0].uri", () -> downstream);
         registry.add("spring.cloud.discovery.client.simple.instances.order-service[0].uri", () -> downstream);
+        registry.add("spring.cloud.discovery.client.simple.instances.inventory-service[0].uri", () -> downstream);
         registry.add("spring.cloud.discovery.client.simple.instances.product-service[0].uri",
                 () -> "http://localhost:" + closedPort());
     }
@@ -97,6 +98,18 @@ class GatewayRoutingSecurityTest {
                 .expectBody()
                 .jsonPath("$.code").isEqualTo("UNAUTHENTICATED")
                 .jsonPath("$.path").isEqualTo("/api/orders");
+    }
+
+    @Test
+    void stockAvailabilityIsPublicButStockAdministrationIsNot() {
+        webTestClient.get().uri("/api/inventory/availability?productIds=1,2")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.path").isEqualTo("/api/inventory/availability");
+
+        webTestClient.get().uri("/api/admin/inventory")
+                .exchange()
+                .expectStatus().isUnauthorized();
     }
 
     @Test
