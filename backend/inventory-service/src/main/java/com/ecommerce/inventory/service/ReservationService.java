@@ -95,6 +95,30 @@ public class ReservationService {
         return settle(orderId, ReservationStatus.COMMITTED);
     }
 
+    /**
+     * Returns committed units to available stock. Used when a confirmed order is cancelled.
+     * {@link #release(long)} does not do this: a release after commit must not restock by accident.
+     */
+    @Transactional
+    public int restockCommitted(long orderId) {
+        List<StockReservation> reservations = reservationRepository.findByOrderIdOrderByProductIdAsc(orderId);
+        Instant now = clock.instant();
+        int changed = 0;
+        for (StockReservation reservation : reservations) {
+            if (reservationRepository.transition(reservation.getId(), ReservationStatus.COMMITTED,
+                    ReservationStatus.RELEASED, now) == 0) {
+                continue;
+            }
+            if (inventoryItemRepository.restock(reservation.getProductId(), reservation.getQuantity(), now) == 0) {
+                throw new IllegalStateException("Product " + reservation.getProductId()
+                        + " disappeared while restocking reservation " + reservation.getId());
+            }
+            changed++;
+        }
+        log.info("Order {}: restocked {} committed lines", orderId, changed);
+        return changed;
+    }
+
     @Transactional(readOnly = true)
     public List<ReservationResponse> findByOrder(long orderId) {
         return reservationRepository.findByOrderIdOrderByProductIdAsc(orderId).stream()

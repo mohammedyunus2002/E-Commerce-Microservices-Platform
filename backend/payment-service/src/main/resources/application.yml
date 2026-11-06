@@ -1,0 +1,89 @@
+server:
+  port: ${SERVER_PORT:8085}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: payment-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}
+    consumer:
+      group-id: ${spring.application.name}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+    listener:
+      missing-topics-fatal: false
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  datasource:
+    url: "${DB_URL:jdbc:mysql://127.0.0.1:3306/payment_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}"
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      pool-name: payment-hikari
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: 2
+      connection-timeout: 5000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/payment-service
+
+app:
+  saga:
+    enabled: ${SAGA_ENABLED:true}
+    outbox-delay: ${SAGA_OUTBOX_DELAY:1s}
+    retry-initial: ${SAGA_RETRY_INITIAL:500ms}
+    retry-max-elapsed: ${SAGA_RETRY_MAX_ELAPSED:30s}
+  order-service:
+    url: ${ORDER_SERVICE_URL:http://localhost:8084}
+    connect-timeout: 2s
+    read-timeout: 5s
+
+security:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER:ecommerce-auth-service}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+springdoc:
+  api-docs:
+    enabled: ${API_DOCS_ENABLED:true}
+  swagger-ui:
+    enabled: ${API_DOCS_ENABLED:true}
+    path: /swagger-ui.html
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},%X{correlationId:-}]"

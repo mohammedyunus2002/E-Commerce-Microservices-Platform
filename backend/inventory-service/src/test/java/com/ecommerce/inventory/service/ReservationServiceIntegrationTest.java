@@ -111,6 +111,19 @@ class ReservationServiceIntegrationTest {
     }
 
     @Test
+    void restockCommittedReturnsUnitsThatWereAlreadySold() {
+        reservationService.reserve(7L, List.of(new ReservationLine(PHONE, 2)));
+        reservationService.commit(7L);
+
+        assertThat(reservationService.restockCommitted(7L)).isEqualTo(1);
+        reservationService.restockCommitted(7L);
+
+        assertStock(PHONE, 5, 0);
+        assertThat(reservationRepository.findByOrderIdOrderByProductIdAsc(7L))
+                .allMatch(reservation -> reservation.getStatus() == ReservationStatus.RELEASED);
+    }
+
+    @Test
     void releasingAnOrderWithoutReservationsIsANoOp() {
         assertThat(reservationService.release(404L)).isEmpty();
         assertStock(PHONE, 5, 0);

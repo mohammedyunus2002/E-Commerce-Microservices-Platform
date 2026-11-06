@@ -113,6 +113,20 @@ class GatewayRoutingSecurityTest {
     }
 
     @Test
+    void cartRequiresATokenAndIsForwardedWhenPresent() {
+        webTestClient.get().uri("/api/cart")
+                .exchange()
+                .expectStatus().isUnauthorized();
+
+        String token = token(List.of("CUSTOMER"), Instant.now().plus(Duration.ofMinutes(5)), SECRET);
+        webTestClient.get().uri("/api/cart")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody().jsonPath("$.path").isEqualTo("/api/cart");
+    }
+
+    @Test
     void validTokenIsForwardedUnchangedToTheService() {
         String token = token(List.of("CUSTOMER"), Instant.now().plus(Duration.ofMinutes(5)), SECRET);
 

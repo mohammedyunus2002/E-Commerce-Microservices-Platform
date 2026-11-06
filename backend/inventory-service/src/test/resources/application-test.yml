@@ -1,4 +1,7 @@
 spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
   datasource:
     # One database per Spring test context, so cached contexts never see each other's rows.
     url: jdbc:h2:mem:inventory_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
@@ -6,6 +9,8 @@ spring:
     password: ""
 
 app:
+  saga:
+    enabled: false
   product-service:
     # Nothing listens here; tests replace ProductCatalogClient or point it at a mock server.
     url: http://localhost:1

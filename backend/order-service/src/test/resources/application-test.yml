@@ -1,0 +1,21 @@
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+  datasource:
+    url: jdbc:h2:mem:order_${random.uuid};MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+
+app:
+  saga:
+    enabled: false
+  product-service:
+    url: http://localhost:1
+  cart:
+    cache-enabled: false
+
+security:
+  jwt:
+    secret: test-only-signing-key-0123456789-abcdef
+    issuer: ecommerce-auth-service

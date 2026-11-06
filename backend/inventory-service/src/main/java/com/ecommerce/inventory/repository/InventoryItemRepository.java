@@ -54,6 +54,16 @@ public interface InventoryItemRepository extends JpaRepository<InventoryItem, Lo
             """)
     int commitReserved(long productId, int quantity, Instant now);
 
+    /** Puts units back on the shelf after they were already committed. Reserved quantity is unchanged. */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update InventoryItem i
+               set i.availableQuantity = i.availableQuantity + :quantity,
+                   i.updatedAt         = :now
+             where i.productId = :productId
+            """)
+    int restock(long productId, int quantity, Instant now);
+
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
             update InventoryItem i

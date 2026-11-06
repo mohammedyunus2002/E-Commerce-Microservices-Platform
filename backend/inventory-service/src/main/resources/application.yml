@@ -8,6 +8,19 @@ server:
 spring:
   application:
     name: inventory-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}
+    consumer:
+      group-id: ${spring.application.name}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+    listener:
+      missing-topics-fatal: false
   lifecycle:
     timeout-per-shutdown-phase: 20s
   datasource:
@@ -29,9 +42,14 @@ spring:
           time_zone: UTC
   flyway:
     enabled: true
-    locations: classpath:db/migration
+    locations: classpath:db/inventory-service
 
 app:
+  saga:
+    enabled: ${SAGA_ENABLED:true}
+    outbox-delay: ${SAGA_OUTBOX_DELAY:1s}
+    retry-initial: ${SAGA_RETRY_INITIAL:500ms}
+    retry-max-elapsed: ${SAGA_RETRY_MAX_ELAPSED:30s}
   product-service:
     url: ${PRODUCT_SERVICE_URL:http://localhost:8082}
     connect-timeout: 2s

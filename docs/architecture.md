@@ -34,9 +34,9 @@ flowchart LR
 | auth-service | 8081 | `auth_db` | Users, roles, BCrypt hashes, profiles, token issuance |
 | product-service | 8082 | `product_db` | Categories, products, search, Redis read cache |
 | inventory-service | 8083 | `inventory_db` | Stock levels and per-order reservations |
-| order-service | 8084 | `order_db` | Orders, items, saga state, Redis cart (*planned*) |
-| payment-service | 8085 | `payment_db` | Simulated charges and refunds (*planned*) |
-| notification-service | 8086 | `notification_db` | Mock email history (*planned*) |
+| order-service | 8084 | `order_db` | Carts, orders, items, and order status. Redis caches the cart |
+| payment-service | 8085 | `payment_db` | Simulated charges and refunds. Does not write order status |
+| notification-service | 8086 | `notification_db` | Stored email records. No mail is sent |
 
 Rules:
 
@@ -145,7 +145,30 @@ Every service and the gateway return the same JSON body:
 
 `code` is stable and safe for clients to branch on. `violations` appears only on validation errors.
 
-## Order saga (*planned*, Phases 4–5)
+## Cart, orders, payments, and notifications
+
+- The cart's source of truth is MySQL (`carts`, `cart_items`). Redis key
+  `order-service:carts::{userId}` is a cache with TTL `CART_CACHE_TTL` (default 30 minutes).
+  Cache failures are logged and the read falls back to MySQL. Readiness does not depend on Redis.
+- `POST /api/orders` and `POST /api/orders/checkout` price lines from the public product catalog,
+  store status `CREATED`, and return `201`. Checkout re-reads the cart after pricing and returns
+  `409 CART_CHANGED` if the lines no longer match. The client polls for a later status.
+- HTTP cancel of `CREATED`, `INVENTORY_RESERVED`, or `PAYMENT_PENDING` moves the order to
+  `CANCELLED` and publishes `order-cancelled`. Cancel of `CONFIRMED` sets `cancelRequested` and
+  leaves the status at `CONFIRMED` until `payment-refunded` moves it to `REFUNDED`.
+  `FAILED`, `CANCELLED`, and `REFUNDED` return `409 ORDER_NOT_CANCELLABLE`.
+- The order aggregate rejects illegal status jumps (`CREATED` → `INVENTORY_RESERVED` →
+  `PAYMENT_PENDING` → `CONFIRMED`, plus fail, cancel-before-capture, and refund). The saga is
+  what calls those transitions. With `SAGA_ENABLED=false`, only `CREATED` can be cancelled and
+  the later transitions are not used.
+- Payment's HTTP charge loads the caller's order over HTTP before its own transaction. It stores
+  `CAPTURED`, `FAILED`, or `REFUNDED` and leaves the order row alone. Amounts whose cents are 13
+  are declined as `CARD_DECLINED`. A captured or refunded charge is idempotent. The saga uses the
+  same decline rule and the same unique `order_id`, so a manual `POST /api/payments` races the saga.
+- Notifications are stored rows. The saga writes the ones listed below. `ORDER_RECEIVED` is only
+  the admin HTTP call.
+
+## Order saga
 
 Orchestrated saga. The order service is the only writer of order status. Inventory and payment
 are participants. Notification only records messages.
@@ -169,12 +192,12 @@ stateDiagram-v2
 | `inventory-reserved` | Inventory | Order | `INVENTORY_RESERVED`, then publish payment request |
 | `inventory-rejected` | Inventory | Order | `FAILED`; nothing was held |
 | `payment-requested` | Order | Payment | `PAYMENT_PENDING`, simulate charge |
-| `payment-completed` | Payment | Order, Notification | `CONFIRMED` |
-| `payment-failed` | Payment | Order | Start compensation |
-| `order-confirmed` | Order | Notification | Confirmation record |
-| `order-cancelled` | Order | Inventory, Payment, Notification | Release stock; refund if captured |
-| `inventory-released` | Inventory | Order | Lets the order finish `FAILED` or `CANCELLED` |
-| `payment-refunded` | Payment | Order | Moves a paid cancellation to `REFUNDED` |
+| `payment-completed` | Payment | Order, Notification | Order moves to `CONFIRMED` and publishes `order-confirmed`. Notification records the event and does not store an email |
+| `payment-failed` | Payment | Order, Notification | Order moves to `FAILED`, publishes `order-cancelled` with reason `PAYMENT_FAILED`, and notification stores `PAYMENT_FAILED` |
+| `order-confirmed` | Order | Inventory, Notification | Inventory commits the reservation. Notification stores `ORDER_CONFIRMED` |
+| `order-cancelled` | Order | Inventory, Payment, Notification | Inventory releases reserved stock and restocks committed stock. Payment refunds a captured charge. Notification stores `ORDER_CANCELLED` unless the reason is `PAYMENT_FAILED` |
+| `inventory-released` | Inventory | Order | Acknowledgement. The order status was already set |
+| `payment-refunded` | Payment | Order, Notification | A confirmed order becomes `REFUNDED`. Notification stores `PAYMENT_REFUNDED` |
 
 Reliability rules:
 
@@ -182,10 +205,12 @@ Reliability rules:
 - Every event carries `eventId`, `correlationId` (the `orderId`), and `causationId`.
 - Consumers insert `eventId` into `processed_events` before side effects; the unique key drops duplicates.
 - Producers use a transactional outbox: the event row commits with the business change, and a relay publishes it.
-- After retries with backoff, a failing message goes to `<topic>.DLT`.
+- After retries with backoff, a failing message goes to `<topic>-dlt` (Spring Kafka 3.3's suffix). A payload that is not a saga event is not retried.
 - Stock is reserved with `UPDATE ... SET available = available - :qty WHERE available >= :qty`.
-- A cancel that arrives before the reservation is stored as a tombstone, so a late `order-created` does not reserve stock.
+- A cancel that arrives before the reservation is stored as a tombstone, so a late `order-created` does not reserve stock. Payment keeps the same kind of tombstone so a late `payment-requested` does not charge.
+- Inventory and payment take a row lock on `order_gates` for that order so reserve and cancel cannot interleave.
 - `POST /api/orders` returns `201` with status `CREATED`; the client polls for the final status.
+- If Kafka is down, the outbox row stays unpublished and the order stays `CREATED`. Readiness does not include the broker. The relay publishes the row once the broker accepts it. A crash after send and before `published_at` is set publishes the same `eventId` again; consumers drop the duplicate.
 
 ## Versions
 
@@ -197,4 +222,4 @@ Reliability rules:
 | Flyway | 11.20.3 | Overrides the Boot-managed 11.7.x for MySQL 8.4 support; same major line |
 | springdoc-openapi | 2.8.17 | |
 | MySQL | 8.4 LTS | |
-| Redis | 7.4 | Product catalog cache |
+| Redis | 7.4 | Product catalog cache and order cart cache |
